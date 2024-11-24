@@ -6,7 +6,7 @@ pub struct Links {
     nlink: Option<u64>,
 }
 
-impl<'a> From<&'a Metadata> for Links {
+impl From<&Metadata> for Links {
     #[cfg(unix)]
     fn from(meta: &Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
@@ -26,7 +26,7 @@ impl Links {
     pub fn render(&self, colors: &Colors) -> ColoredString {
         match self.nlink {
             Some(i) => colors.colorize(i.to_string(), &Elem::Links { valid: true }),
-            None => colors.colorize(String::from("-"), &Elem::Links { valid: false }),
+            None => colors.colorize('-', &Elem::Links { valid: false }),
         }
     }
 }
@@ -41,7 +41,7 @@ mod tests {
     use std::process::{Command, ExitStatus};
 
     fn cross_platform_touch(path: &Path) -> io::Result<ExitStatus> {
-        Command::new("touch").arg(&path).status()
+        Command::new("touch").arg(path).status()
     }
 
     #[test]

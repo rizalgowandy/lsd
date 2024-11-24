@@ -38,53 +38,63 @@ mod test {
 
     #[test]
     fn test_directory_indicator() {
-        let mut flags = Flags::default();
-        flags.display_indicators = Indicators(true);
+        let flags = Flags {
+            display_indicators: Indicators(true),
+            ..Default::default()
+        };
 
         let file_type = Indicator::from(FileType::Directory { uid: false });
 
-        assert_eq!("/", file_type.render(&flags).to_string().as_str());
+        assert_eq!("/", file_type.render(&flags).to_string());
     }
 
     #[test]
     fn test_executable_file_indicator() {
-        let mut flags = Flags::default();
-        flags.display_indicators = Indicators(true);
+        let flags = Flags {
+            display_indicators: Indicators(true),
+            ..Default::default()
+        };
 
         let file_type = Indicator::from(FileType::File {
             uid: false,
             exec: true,
         });
 
-        assert_eq!("*", file_type.render(&flags).to_string().as_str());
+        assert_eq!("*", file_type.render(&flags).to_string());
     }
 
     #[test]
     fn test_socket_indicator() {
-        let mut flags = Flags::default();
-        flags.display_indicators = Indicators(true);
+        let flags = Flags {
+            display_indicators: Indicators(true),
+            ..Default::default()
+        };
 
         let file_type = Indicator::from(FileType::Socket);
 
-        assert_eq!("=", file_type.render(&flags).to_string().as_str());
+        assert_eq!("=", file_type.render(&flags).to_string());
     }
 
     #[test]
     fn test_symlink_indicator() {
-        let mut flags = Flags::default();
-        flags.display_indicators = Indicators(true);
+        let flags = Flags {
+            display_indicators: Indicators(true),
+            ..Default::default()
+        };
 
         let file_type = Indicator::from(FileType::SymLink { is_dir: false });
-        assert_eq!("@", file_type.render(&flags).to_string().as_str());
+        assert_eq!("@", file_type.render(&flags).to_string());
 
         let file_type = Indicator::from(FileType::SymLink { is_dir: true });
-        assert_eq!("@", file_type.render(&flags).to_string().as_str());
+        assert_eq!("@", file_type.render(&flags).to_string());
     }
 
     #[test]
     fn test_not_represented_indicator() {
-        let mut flags = Flags::default();
-        flags.display_indicators = Indicators(true);
+        let flags = Flags {
+            display_indicators: Indicators(true),
+            ..Default::default()
+        };
 
         // The File type doesn't have any indicator
         let file_type = Indicator::from(FileType::File {
@@ -92,6 +102,6 @@ mod test {
             uid: false,
         });
 
-        assert_eq!("", file_type.render(&flags).to_string().as_str());
+        assert_eq!("", file_type.render(&flags).to_string());
     }
 }

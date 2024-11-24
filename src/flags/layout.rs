@@ -1,36 +1,34 @@
-//! This module defines the [Layout] flag. To set it up from [ArgMatches], a [Config] and its
+//! This module defines the [Layout] flag. To set it up from [Cli], a [Config] and its
 //! [Default] value, use its [configure_from](Configurable::configure_from) method.
 
+use crate::app::Cli;
 use crate::config_file::Config;
 
 use super::Configurable;
 
-use clap::ArgMatches;
 use serde::Deserialize;
 
 /// The flag showing which output layout to print.
-#[derive(Clone, Debug, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Layout {
+    #[default]
     Grid,
     Tree,
     OneLine,
 }
 
 impl Configurable<Layout> for Layout {
-    /// Get a potential `Layout` variant from [ArgMatches].
+    /// Get a potential `Layout` variant from [Cli].
     ///
     /// If any of the "tree", "long" or "oneline" arguments is passed, this returns the
     /// corresponding `Layout` variant in a [Some]. Otherwise if the number of passed "blocks"
     /// arguments is greater than 1, this also returns the [OneLine](Layout::OneLine) variant.
     /// Finally if neither of them is passed, this returns [None].
-    fn from_arg_matches(matches: &ArgMatches) -> Option<Self> {
-        if matches.is_present("tree") {
+    fn from_cli(cli: &Cli) -> Option<Self> {
+        if cli.tree {
             Some(Self::Tree)
-        } else if matches.is_present("long")
-            || matches.is_present("oneline")
-            || matches.is_present("inode")
-            || matches!(matches.values_of("blocks"), Some(values) if values.len() > 1)
+        } else if cli.long || cli.oneline || cli.inode || cli.context || cli.blocks.len() > 1
         // TODO: handle this differently
         {
             Some(Self::OneLine)
@@ -49,54 +47,49 @@ impl Configurable<Layout> for Layout {
     }
 }
 
-/// The default value for `Layout` is [Layout::Grid].
-impl Default for Layout {
-    fn default() -> Self {
-        Self::Grid
-    }
-}
-
 #[cfg(test)]
 mod test {
+    use clap::Parser;
+
     use super::Layout;
 
-    use crate::app;
+    use crate::app::Cli;
     use crate::config_file::Config;
     use crate::flags::Configurable;
 
     #[test]
-    fn test_from_arg_matches_none() {
-        let argv = vec!["lsd"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(None, Layout::from_arg_matches(&matches));
+    fn test_from_cli_none() {
+        let argv = ["lsd"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(None, Layout::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_tree() {
-        let argv = vec!["lsd", "--tree"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(Some(Layout::Tree), Layout::from_arg_matches(&matches));
+    fn test_from_cli_tree() {
+        let argv = ["lsd", "--tree"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Layout::Tree), Layout::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_oneline() {
-        let argv = vec!["lsd", "--oneline"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(Some(Layout::OneLine), Layout::from_arg_matches(&matches));
+    fn test_from_cli_oneline() {
+        let argv = ["lsd", "--oneline"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Layout::OneLine), Layout::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_oneline_through_long() {
-        let argv = vec!["lsd", "--long"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(Some(Layout::OneLine), Layout::from_arg_matches(&matches));
+    fn test_from_cli_oneline_through_long() {
+        let argv = ["lsd", "--long"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Layout::OneLine), Layout::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_oneline_through_blocks() {
-        let argv = vec!["lsd", "--blocks", "permission,name"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(Some(Layout::OneLine), Layout::from_arg_matches(&matches));
+    fn test_from_cli_oneline_through_blocks() {
+        let argv = ["lsd", "--blocks", "permission,name"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Layout::OneLine), Layout::from_cli(&cli));
     }
 
     #[test]

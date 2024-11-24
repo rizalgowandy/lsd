@@ -8,6 +8,8 @@ use std::process::Command;
 
 #[cfg(unix)]
 use std::os::unix::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[test]
 fn test_runs_okay() {
@@ -211,11 +213,32 @@ fn test_list_broken_link_ok() {
         .assert()
         .stderr(predicate::str::contains(matched).not());
 }
+
+// ls link
+// should show dir content
 #[cfg(unix)]
 #[test]
 fn test_nosymlink_on_non_long() {
     let dir = tempdir();
-    dir.child("target").touch().unwrap();
+    dir.child("target").child("inside").touch().unwrap();
+    let link = dir.path().join("link");
+    let link_icon = "⇒";
+    fs::symlink("target", &link).unwrap();
+
+    cmd()
+        .arg("--ignore-config")
+        .arg(&link)
+        .assert()
+        .stdout(predicate::str::contains(link_icon).not());
+}
+
+// ls -l link
+// should show the link itself
+#[cfg(unix)]
+#[test]
+fn test_symlink_on_long() {
+    let dir = tempdir();
+    dir.child("target").child("inside").touch().unwrap();
     let link = dir.path().join("link");
     let link_icon = "⇒";
     fs::symlink("target", &link).unwrap();
@@ -226,12 +249,6 @@ fn test_nosymlink_on_non_long() {
         .arg(&link)
         .assert()
         .stdout(predicate::str::contains(link_icon));
-
-    cmd()
-        .arg("--ignore-config")
-        .arg(&link)
-        .assert()
-        .stdout(predicate::str::contains(link_icon).not());
 }
 
 #[cfg(unix)]
@@ -287,6 +304,40 @@ fn test_dereference_link_broken_link() {
         .stderr(predicate::str::contains("No such file or directory"));
 }
 
+#[test]
+fn test_dereference_link_broken_link_output() {
+    let dir = tempdir();
+
+    let link = dir.path().join("link");
+    let target = dir.path().join("target");
+
+    #[cfg(unix)]
+    fs::symlink(target, &link).unwrap();
+
+    // this needs to be tested on Windows
+    // likely to fail because of permission issue
+    // see https://doc.rust-lang.org/std/os/windows/fs/fn.symlink_file.html
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_file(target, &link).expect("failed to create broken symlink");
+
+    cmd()
+        .arg("-l")
+        .arg("--dereference")
+        .arg("--ignore-config")
+        .arg(&link)
+        .assert()
+        .stdout(predicate::str::starts_with("l????????? ? ? ? ?"));
+
+    cmd()
+        .arg("-l")
+        .arg("-L")
+        .arg("--ignore-config")
+        .arg(link)
+        .assert()
+        .stdout(predicate::str::starts_with("l????????? ? ? ? ?"));
+}
+
+/// should work both tty available and not
 #[cfg(unix)]
 #[test]
 fn test_show_folder_content_of_symlink() {
@@ -303,6 +354,8 @@ fn test_show_folder_content_of_symlink() {
         .stdout(predicate::str::starts_with("inside"));
 }
 
+/// ls -l link
+/// should show the link itself
 #[cfg(unix)]
 #[test]
 fn test_no_show_folder_content_of_symlink_for_long() {
@@ -318,6 +371,17 @@ fn test_no_show_folder_content_of_symlink_for_long() {
         .assert()
         .stdout(predicate::str::starts_with("lrw"))
         .stdout(predicate::str::contains("⇒"));
+}
+
+/// ls -l link/
+/// should show the dir content
+#[cfg(unix)]
+#[test]
+fn test_show_folder_content_of_symlink_for_long_tail_slash() {
+    let dir = tempdir();
+    dir.child("target").child("inside").touch().unwrap();
+    let link = dir.path().join("link");
+    fs::symlink("target", link).unwrap();
 
     cmd()
         .arg("-l")
@@ -334,7 +398,7 @@ fn test_show_folder_of_symlink_for_long_multi() {
     let dir = tempdir();
     dir.child("target").child("inside").touch().unwrap();
     let link = dir.path().join("link");
-    fs::symlink("target", &link).unwrap();
+    fs::symlink("target", link).unwrap();
 
     cmd()
         .arg("-l")
@@ -421,6 +485,7 @@ fn test_bad_utf_8_extension() {
 
     cmd()
         .arg(tmp.path())
+        .arg("--ignore-config")
         .assert()
         .stdout(predicate::str::is_match("bad.extension\u{fffd}\u{fffd}\n$").unwrap());
 }
@@ -435,6 +500,7 @@ fn test_bad_utf_8_name() {
 
     cmd()
         .arg(tmp.path())
+        .arg("--ignore-config")
         .assert()
         .stdout(predicate::str::is_match("bad-name\u{fffd}\u{fffd}.ext\n$").unwrap());
 }
@@ -449,6 +515,7 @@ fn test_tree() {
     cmd()
         .arg(tmp.path())
         .arg("--tree")
+        .arg("--ignore-config")
         .assert()
         .stdout(predicate::str::is_match("├── one\n└── one.d\n    └── two\n$").unwrap());
 }
@@ -465,6 +532,7 @@ fn test_tree_all_not_show_self() {
         .arg(tmp.path())
         .arg("--tree")
         .arg("--all")
+        .arg("--ignore-config")
         .assert()
         .stdout(
             predicate::str::is_match("├── one\n└── one.d\n    ├── .hidden\n    └── two\n$")
@@ -482,6 +550,7 @@ fn test_tree_show_edge_before_name() {
         .arg(tmp.path())
         .arg("--tree")
         .arg("--long")
+        .arg("--ignore-config")
         .assert()
         .stdout(predicate::str::is_match("└── two\n$").unwrap());
 }
@@ -500,8 +569,51 @@ fn test_tree_d() {
         .arg(tmp.path())
         .arg("--tree")
         .arg("-d")
+        .arg("--ignore-config")
         .assert()
         .stdout(predicate::str::is_match("├── one.d\n│   └── one.d\n└── two.d\n$").unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn test_tree_no_dereference() {
+    let tmp = tempdir();
+    tmp.child("one.d").create_dir_all().unwrap();
+    tmp.child("one.d/samplefile").touch().unwrap();
+    let link = tmp.path().join("link");
+    fs::symlink("one.d", link).unwrap();
+
+    cmd()
+        .arg("--tree")
+        .arg("--ignore-config")
+        .arg(tmp.path())
+        .assert()
+        .stdout(
+            predicate::str::is_match("├── link ⇒ one.d\n└── one.d\n    └── samplefile\n$").unwrap(),
+        );
+}
+
+#[cfg(unix)]
+#[test]
+fn test_tree_dereference() {
+    let tmp = tempdir();
+    tmp.child("one.d").create_dir_all().unwrap();
+    tmp.child("one.d/samplefile").touch().unwrap();
+    let link = tmp.path().join("link");
+    fs::symlink("one.d", link).unwrap();
+
+    cmd()
+        .arg("--ignore-config")
+        .arg(tmp.path())
+        .arg("--tree")
+        .arg("-L")
+        .assert()
+        .stdout(
+            predicate::str::is_match(
+                "├── link\n│   └── samplefile\n└── one.d\n    └── samplefile\n$",
+            )
+            .unwrap(),
+        );
 }
 
 fn cmd() -> Command {
@@ -578,6 +690,24 @@ fn test_upper_case_ext_icon_match() {
 
 #[cfg(unix)]
 #[test]
+fn test_truncate_owner() {
+    let dir = tempdir();
+    dir.child("foo").touch().unwrap();
+
+    cmd()
+        .arg("-l")
+        .arg("--ignore-config")
+        .arg("--truncate-owner-after")
+        .arg("1")
+        .arg("--truncate-owner-marker")
+        .arg("…")
+        .arg(dir.path())
+        .assert()
+        .stdout(predicate::str::is_match(" .… .… ").unwrap());
+}
+
+#[cfg(unix)]
+#[test]
 fn test_custom_config_file_parsing() {
     let dir = tempdir();
     dir.child("config.yaml").write_str("layout: tree").unwrap();
@@ -591,6 +721,45 @@ fn test_custom_config_file_parsing() {
         .arg(dir.child("folder").path())
         .assert()
         .stdout(predicate::str::is_match("folder\n└── file").unwrap());
+}
+
+#[test]
+fn test_cannot_access_file_exit_status() {
+    let dir = tempdir();
+    let does_not_exist = dir.path().join("does_not_exist");
+
+    let status = cmd()
+        .arg("-l")
+        .arg("--ignore-config")
+        .arg(does_not_exist)
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+
+    assert_eq!(status, 2)
+}
+
+#[cfg(unix)]
+#[test]
+fn test_cannot_access_subdir_exit_status() {
+    let tmp = tempdir();
+
+    let readonly = std::fs::Permissions::from_mode(0o400);
+    tmp.child("d/subdir/onemore").create_dir_all().unwrap();
+
+    std::fs::set_permissions(tmp.child("d").path().join("subdir"), readonly).unwrap();
+
+    let status = cmd()
+        .arg("--tree")
+        .arg("--ignore-config")
+        .arg(tmp.child("d").path())
+        .status()
+        .unwrap()
+        .code()
+        .unwrap();
+
+    assert_eq!(status, 1)
 }
 
 #[test]
@@ -642,7 +811,21 @@ fn test_all_directory() {
     cmd()
         .arg("-a")
         .arg("-d")
+        .arg("--ignore-config")
         .arg(dir.path())
+        .assert()
+        .stdout(predicate::str::is_match(".").unwrap());
+}
+
+#[test]
+fn test_multiple_files() {
+    let dir = tempdir();
+    dir.child("one").touch().unwrap();
+    dir.child("two").touch().unwrap();
+
+    cmd()
+        .arg(dir.path().join("one"))
+        .arg(dir.path().join("two"))
         .assert()
         .stdout(predicate::str::is_match(".").unwrap());
 }

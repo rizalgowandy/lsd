@@ -1,13 +1,12 @@
-mod theme;
-
-use crossterm::style::{Attribute, ContentStyle, StyledContent, Stylize};
-use theme::Theme;
-
-pub use crate::flags::color::ThemeOption;
-
 use crossterm::style::Color;
+use crossterm::style::{Attribute, ContentStyle, StyledContent, Stylize};
 use lscolors::{Indicator, LsColors};
 use std::path::Path;
+
+pub use crate::flags::color::ThemeOption;
+use crate::git::GitStatus;
+use crate::print_output;
+use crate::theme::{color::ColorTheme, Theme};
 
 #[allow(dead_code)]
 #[derive(Hash, Debug, Eq, PartialEq, Clone)]
@@ -35,6 +34,15 @@ pub enum Elem {
     Exec,
     ExecSticky,
     NoAccess,
+    Octal,
+    Acl,
+    Context,
+
+    /// Attributes
+    Archive,
+    AttributeRead,
+    Hidden,
+    System,
 
     /// Last Time Modified
     DayOld,
@@ -61,14 +69,18 @@ pub enum Elem {
     },
 
     TreeEdge,
+
+    GitStatus {
+        status: GitStatus,
+    },
 }
 
 impl Elem {
-    pub fn has_suid(&self) -> bool {
+    fn has_suid(&self) -> bool {
         matches!(self, Elem::Dir { uid: true } | Elem::File { uid: true, .. })
     }
 
-    pub fn get_color(&self, theme: &theme::Theme) -> Color {
+    pub fn get_color(&self, theme: &ColorTheme) -> Color {
         match self {
             Elem::File {
                 exec: true,
@@ -102,6 +114,14 @@ impl Elem {
             Elem::Exec => theme.permission.exec,
             Elem::ExecSticky => theme.permission.exec_sticky,
             Elem::NoAccess => theme.permission.no_access,
+            Elem::Octal => theme.permission.octal,
+            Elem::Acl => theme.permission.acl,
+            Elem::Context => theme.permission.context,
+
+            Elem::Archive => theme.attributes.archive,
+            Elem::AttributeRead => theme.attributes.read,
+            Elem::Hidden => theme.attributes.hidden,
+            Elem::System => theme.attributes.system,
 
             Elem::DayOld => theme.date.day_old,
             Elem::HourOld => theme.date.hour_old,
@@ -113,11 +133,42 @@ impl Elem {
             Elem::FileLarge => theme.size.large,
             Elem::FileMedium => theme.size.medium,
             Elem::FileSmall => theme.size.small,
-            Elem::INode { valid: false } => theme.inode.valid,
-            Elem::INode { valid: true } => theme.inode.invalid,
+            Elem::INode { valid: true } => theme.inode.valid,
+            Elem::INode { valid: false } => theme.inode.invalid,
             Elem::TreeEdge => theme.tree_edge,
             Elem::Links { valid: false } => theme.links.invalid,
             Elem::Links { valid: true } => theme.links.valid,
+
+            Elem::GitStatus {
+                status: GitStatus::Default,
+            } => theme.git_status.default,
+            Elem::GitStatus {
+                status: GitStatus::Unmodified,
+            } => theme.git_status.unmodified,
+            Elem::GitStatus {
+                status: GitStatus::Ignored,
+            } => theme.git_status.ignored,
+            Elem::GitStatus {
+                status: GitStatus::NewInIndex,
+            } => theme.git_status.new_in_index,
+            Elem::GitStatus {
+                status: GitStatus::NewInWorkdir,
+            } => theme.git_status.new_in_workdir,
+            Elem::GitStatus {
+                status: GitStatus::Typechange,
+            } => theme.git_status.typechange,
+            Elem::GitStatus {
+                status: GitStatus::Deleted,
+            } => theme.git_status.deleted,
+            Elem::GitStatus {
+                status: GitStatus::Renamed,
+            } => theme.git_status.renamed,
+            Elem::GitStatus {
+                status: GitStatus::Modified,
+            } => theme.git_status.modified,
+            Elem::GitStatus {
+                status: GitStatus::Conflicted,
+            } => theme.git_status.conflicted,
         }
     }
 }
@@ -125,7 +176,7 @@ impl Elem {
 pub type ColoredString = StyledContent<String>;
 
 pub struct Colors {
-    theme: Option<Theme>,
+    theme: Option<ColorTheme>,
     lscolors: Option<LsColors>,
 }
 
@@ -133,21 +184,36 @@ impl Colors {
     pub fn new(t: ThemeOption) -> Self {
         let theme = match t {
             ThemeOption::NoColor => None,
-            ThemeOption::Default => Some(Theme::default()),
-            ThemeOption::NoLscolors => Some(Theme::default()),
-            ThemeOption::Custom(ref file) => Some(Theme::from_path(file).unwrap_or_default()),
+            ThemeOption::Default | ThemeOption::NoLscolors => Some(Theme::default().color),
+            ThemeOption::Custom => Some(
+                Theme::from_path::<ColorTheme>(Path::new("colors").to_str().unwrap())
+                    .unwrap_or_default(),
+            ),
+            ThemeOption::CustomLegacy(ref file) => {
+                print_output!(
+                    "Warning: the 'themes' directory is deprecated, use 'colors.yaml' instead.\n\n"
+                );
+                // TODO: drop the `themes` dir prefix, adding it here only for backwards compatibility
+                Some(
+                    Theme::from_path::<ColorTheme>(
+                        Path::new("themes").join(file).to_str().unwrap_or(file),
+                    )
+                    .unwrap_or_default(),
+                )
+            }
         };
         let lscolors = match t {
-            ThemeOption::Default => Some(LsColors::from_env().unwrap_or_default()),
-            ThemeOption::Custom(_) => Some(LsColors::from_env().unwrap_or_default()),
+            ThemeOption::Default | ThemeOption::Custom | ThemeOption::CustomLegacy(_) => {
+                Some(LsColors::from_env().unwrap_or_default())
+            }
             _ => None,
         };
 
         Self { theme, lscolors }
     }
 
-    pub fn colorize(&self, input: String, elem: &Elem) -> ColoredString {
-        self.style(elem).apply(input)
+    pub fn colorize<S: Into<String>>(&self, input: S, elem: &Elem) -> ColoredString {
+        self.style(elem).apply(input.into())
     }
 
     pub fn colorize_using_path(&self, input: String, path: &Path, elem: &Elem) -> ColoredString {
@@ -216,14 +282,6 @@ impl Colors {
             Elem::CharDevice => Some("cd"),
             Elem::BrokenSymLink => Some("or"),
             Elem::MissingSymLinkTarget => Some("mi"),
-            Elem::INode { valid } => match valid {
-                true => Some("so"),
-                false => Some("no"),
-            },
-            Elem::Links { valid } => match valid {
-                true => Some("so"),
-                false => Some("no"),
-            },
             _ => None,
         };
 
@@ -249,7 +307,15 @@ fn to_content_style(ls: &lscolors::Style) -> ContentStyle {
         lscolors::style::Color::Blue => Color::DarkBlue,
         lscolors::style::Color::Magenta => Color::DarkMagenta,
         lscolors::style::Color::Cyan => Color::DarkCyan,
-        lscolors::style::Color::White => Color::White,
+        lscolors::style::Color::White => Color::Grey,
+        lscolors::style::Color::BrightBlack => Color::DarkGrey,
+        lscolors::style::Color::BrightRed => Color::Red,
+        lscolors::style::Color::BrightGreen => Color::Green,
+        lscolors::style::Color::BrightYellow => Color::Yellow,
+        lscolors::style::Color::BrightBlue => Color::Blue,
+        lscolors::style::Color::BrightMagenta => Color::Magenta,
+        lscolors::style::Color::BrightCyan => Color::Cyan,
+        lscolors::style::Color::BrightWhite => Color::White,
     };
     let mut style = ContentStyle {
         foreground_color: ls.foreground.as_ref().map(to_crossterm_color),
@@ -291,26 +357,34 @@ fn to_content_style(ls: &lscolors::Style) -> ContentStyle {
 #[cfg(test)]
 mod tests {
     use super::Colors;
-    use crate::color::Theme;
     use crate::color::ThemeOption;
+    use crate::theme::color::ColorTheme;
     #[test]
     fn test_color_new_no_color_theme() {
         assert!(Colors::new(ThemeOption::NoColor).theme.is_none());
     }
 
     #[test]
-    fn test_color_new_default_theme() {
+    fn test_color_new_custom_theme() {
         assert_eq!(
-            Colors::new(ThemeOption::Default).theme,
-            Some(Theme::default_dark()),
+            Colors::new(ThemeOption::Custom).theme,
+            Some(ColorTheme::default_dark()),
         );
     }
 
     #[test]
-    fn test_color_new_bad_custom_theme() {
+    fn test_color_new_custom_no_file_theme() {
         assert_eq!(
-            Colors::new(ThemeOption::Custom("not-existed".to_string())).theme,
-            Some(Theme::default_dark()),
+            Colors::new(ThemeOption::Custom).theme,
+            Some(ColorTheme::default_dark()),
+        );
+    }
+
+    #[test]
+    fn test_color_new_bad_legacy_custom_theme() {
+        assert_eq!(
+            Colors::new(ThemeOption::CustomLegacy("not-existed".to_string())).theme,
+            Some(ColorTheme::default_dark()),
         );
     }
 }
@@ -318,34 +392,43 @@ mod tests {
 #[cfg(test)]
 mod elem {
     use super::Elem;
-    use crate::color::{theme, Theme};
+    use crate::theme::{color, color::ColorTheme};
     use crossterm::style::Color;
 
     #[cfg(test)]
-    fn test_theme() -> Theme {
-        Theme {
+    fn test_theme() -> ColorTheme {
+        ColorTheme {
             user: Color::AnsiValue(230),  // Cornsilk1
             group: Color::AnsiValue(187), // LightYellow3
-            permission: theme::Permission {
+            permission: color::Permission {
                 read: Color::Green,
                 write: Color::Yellow,
                 exec: Color::Red,
                 exec_sticky: Color::Magenta,
                 no_access: Color::AnsiValue(245), // Grey
+                octal: Color::AnsiValue(6),
+                acl: Color::DarkCyan,
+                context: Color::Cyan,
             },
-            file_type: theme::FileType {
-                file: theme::File {
+            attributes: color::Attributes {
+                read: Color::Green,
+                archive: Color::Yellow,
+                hidden: Color::Red,
+                system: Color::Magenta,
+            },
+            file_type: color::FileType {
+                file: color::File {
                     exec_uid: Color::AnsiValue(40),        // Green3
                     uid_no_exec: Color::AnsiValue(184),    // Yellow3
                     exec_no_uid: Color::AnsiValue(40),     // Green3
                     no_exec_no_uid: Color::AnsiValue(184), // Yellow3
                 },
-                dir: theme::Dir {
+                dir: color::Dir {
                     uid: Color::AnsiValue(33),    // DodgerBlue1
                     no_uid: Color::AnsiValue(33), // DodgerBlue1
                 },
                 pipe: Color::AnsiValue(44), // DarkTurquoise
-                symlink: theme::Symlink {
+                symlink: color::Symlink {
                     default: Color::AnsiValue(44),         // DarkTurquoise
                     broken: Color::AnsiValue(124),         // Red3
                     missing_target: Color::AnsiValue(124), // Red3
@@ -355,26 +438,27 @@ mod elem {
                 socket: Color::AnsiValue(44),       // DarkTurquoise
                 special: Color::AnsiValue(44),      // DarkTurquoise
             },
-            date: theme::Date {
+            date: color::Date {
                 hour_old: Color::AnsiValue(40), // Green3
                 day_old: Color::AnsiValue(42),  // SpringGreen2
                 older: Color::AnsiValue(36),    // DarkCyan
             },
-            size: theme::Size {
+            size: color::Size {
                 none: Color::AnsiValue(245),   // Grey
                 small: Color::AnsiValue(229),  // Wheat1
                 medium: Color::AnsiValue(216), // LightSalmon1
                 large: Color::AnsiValue(172),  // Orange3
             },
-            inode: theme::INode {
+            inode: color::INode {
                 valid: Color::AnsiValue(13),    // Pink
                 invalid: Color::AnsiValue(245), // Grey
             },
-            links: theme::Links {
+            links: color::Links {
                 valid: Color::AnsiValue(13),    // Pink
                 invalid: Color::AnsiValue(245), // Grey
             },
             tree_edge: Color::AnsiValue(245), // Grey
+            git_status: Default::default(),
         }
     }
 

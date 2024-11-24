@@ -9,10 +9,10 @@ pub struct SymLink {
     valid: bool,
 }
 
-impl<'a> From<&'a Path> for SymLink {
-    fn from(path: &'a Path) -> Self {
+impl From<&Path> for SymLink {
+    fn from(path: &Path) -> Self {
         if let Ok(target) = read_link(path) {
-            if target.is_absolute() || path.parent() == None {
+            if target.is_absolute() || path.parent().is_none() {
                 return Self {
                     valid: target.exists(),
                     target: Some(
@@ -74,8 +74,11 @@ impl SymLink {
 
 #[cfg(test)]
 mod tests {
+    use clap::Parser;
+
     use super::SymLink;
-    use crate::app;
+
+    use crate::app::Cli;
     use crate::color::{Colors, ThemeOption};
     use crate::config_file::Config;
     use crate::flags::Flags;
@@ -86,13 +89,13 @@ mod tests {
             target: Some("/target".to_string()),
             valid: true,
         };
-        let argv = vec!["lsd"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
+        let argv = ["lsd"];
+        let cli = Cli::try_parse_from(argv).unwrap();
         assert_eq!(
             format!("{}", " ⇒ /target"),
             link.render(
                 &Colors::new(ThemeOption::NoColor),
-                &Flags::configure_from(&matches, &Config::with_none()).unwrap()
+                &Flags::configure_from(&cli, &Config::with_none()).unwrap()
             )
             .to_string()
         );
@@ -104,13 +107,13 @@ mod tests {
             target: Some("/target".to_string()),
             valid: false,
         };
-        let argv = vec!["lsd"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
+        let argv = ["lsd"];
+        let cli = Cli::try_parse_from(argv).unwrap();
         assert_eq!(
             format!("{}", " ⇒ /target"),
             link.render(
                 &Colors::new(ThemeOption::NoColor),
-                &Flags::configure_from(&matches, &Config::with_none()).unwrap()
+                &Flags::configure_from(&cli, &Config::with_none()).unwrap()
             )
             .to_string()
         );
@@ -122,13 +125,13 @@ mod tests {
             target: Some("/target".to_string()),
             valid: false,
         };
-        let argv = vec!["lsd"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
+        let argv = ["lsd"];
+        let cli = Cli::try_parse_from(argv).unwrap();
         assert_eq!(
             format!("{}", " ⇒ \u{1b}[38;5;124m/target\u{1b}[39m"),
             link.render(
                 &Colors::new(ThemeOption::NoLscolors),
-                &Flags::configure_from(&matches, &Config::with_none()).unwrap()
+                &Flags::configure_from(&cli, &Config::with_none()).unwrap()
             )
             .to_string()
         );

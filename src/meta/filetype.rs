@@ -1,5 +1,4 @@
 use crate::color::{ColoredString, Colors, Elem};
-use crate::meta::Permissions;
 use std::fs::Metadata;
 
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
@@ -16,11 +15,14 @@ pub enum FileType {
 }
 
 impl FileType {
+    #[cfg(windows)]
+    const EXECUTABLE_EXTENSIONS: &'static [&'static str] = &["exe", "msi", "bat", "ps1"];
+
     #[cfg(unix)]
     pub fn new(
         meta: &Metadata,
         symlink_meta: Option<&Metadata>,
-        permissions: &Permissions,
+        permissions: &crate::meta::Permissions,
     ) -> Self {
         use std::os::unix::fs::FileTypeExt;
 
@@ -54,22 +56,22 @@ impl FileType {
     }
 
     #[cfg(windows)]
-    pub fn new(
-        meta: &Metadata,
-        symlink_meta: Option<&Metadata>,
-        permissions: &Permissions,
-    ) -> Self {
+    pub fn new(meta: &Metadata, symlink_meta: Option<&Metadata>, path: &std::path::Path) -> Self {
         let file_type = meta.file_type();
 
         if file_type.is_file() {
-            FileType::File {
-                exec: permissions.is_executable(),
-                uid: permissions.setuid,
-            }
+            let exec = path
+                .extension()
+                .map(|ext| {
+                    Self::EXECUTABLE_EXTENSIONS
+                        .iter()
+                        .map(std::ffi::OsStr::new)
+                        .any(|exec_ext| ext == exec_ext)
+                })
+                .unwrap_or(false);
+            FileType::File { exec, uid: false }
         } else if file_type.is_dir() {
-            FileType::Directory {
-                uid: permissions.setuid,
-            }
+            FileType::Directory { uid: false }
         } else if file_type.is_symlink() {
             FileType::SymLink {
                 // if broken, defaults to false
@@ -91,18 +93,14 @@ impl FileType {
 impl FileType {
     pub fn render(self, colors: &Colors) -> ColoredString {
         match self {
-            FileType::File { exec, .. } => {
-                colors.colorize(String::from("."), &Elem::File { exec, uid: false })
-            }
-            FileType::Directory { .. } => {
-                colors.colorize(String::from("d"), &Elem::Dir { uid: false })
-            }
-            FileType::Pipe => colors.colorize(String::from("|"), &Elem::Pipe),
-            FileType::SymLink { .. } => colors.colorize(String::from("l"), &Elem::SymLink),
-            FileType::BlockDevice => colors.colorize(String::from("b"), &Elem::BlockDevice),
-            FileType::CharDevice => colors.colorize(String::from("c"), &Elem::CharDevice),
-            FileType::Socket => colors.colorize(String::from("s"), &Elem::Socket),
-            FileType::Special => colors.colorize(String::from("?"), &Elem::Special),
+            FileType::File { exec, .. } => colors.colorize('.', &Elem::File { exec, uid: false }),
+            FileType::Directory { .. } => colors.colorize('d', &Elem::Dir { uid: false }),
+            FileType::Pipe => colors.colorize('|', &Elem::Pipe),
+            FileType::SymLink { .. } => colors.colorize('l', &Elem::SymLink),
+            FileType::BlockDevice => colors.colorize('b', &Elem::BlockDevice),
+            FileType::CharDevice => colors.colorize('c', &Elem::CharDevice),
+            FileType::Socket => colors.colorize('s', &Elem::Socket),
+            FileType::Special => colors.colorize('?', &Elem::Special),
         }
     }
 }
@@ -111,11 +109,13 @@ impl FileType {
 mod test {
     use super::FileType;
     use crate::color::{Colors, ThemeOption};
-    use crate::meta::Meta;
+    #[cfg(unix)]
+    use crate::flags::PermissionFlag;
+    #[cfg(unix)]
+    use crate::meta::permissions_or_attributes::PermissionsOrAttributes;
     #[cfg(unix)]
     use crate::meta::Permissions;
     use crossterm::style::{Color, Stylize};
-    #[cfg(unix)]
     use std::fs::File;
     #[cfg(unix)]
     use std::os::unix::fs::symlink;
@@ -147,12 +147,22 @@ mod test {
     #[test]
     fn test_dir_type() {
         let tmp_dir = tempdir().expect("failed to create temp dir");
-        let meta = Meta::from_path(&tmp_dir.path().to_path_buf(), false)
+        #[cfg(not(windows))]
+        let meta = crate::meta::Meta::from_path(tmp_dir.path(), false, PermissionFlag::Rwx)
             .expect("failed to get tempdir path");
         let metadata = tmp_dir.path().metadata().expect("failed to get metas");
 
         let colors = Colors::new(ThemeOption::NoLscolors);
-        let file_type = FileType::new(&metadata, None, &meta.permissions);
+
+        #[cfg(not(windows))]
+        let file_type = match meta.permissions_or_attributes {
+            Some(PermissionsOrAttributes::Permissions(permissions)) => {
+                FileType::new(&metadata, None, &permissions)
+            }
+            _ => panic!("unexpected"),
+        };
+        #[cfg(windows)]
+        let file_type = FileType::new(&metadata, None, tmp_dir.path());
 
         assert_eq!(
             "d".to_string().with(Color::AnsiValue(33)),
@@ -222,7 +232,7 @@ mod test {
             .status()
             .expect("failed to exec mkfifo")
             .success();
-        assert_eq!(true, success, "failed to exec mkfifo");
+        assert!(success, "failed to exec mkfifo");
         let meta = pipe_path.metadata().expect("failed to get metas");
 
         let colors = Colors::new(ThemeOption::NoLscolors);
@@ -250,7 +260,7 @@ mod test {
             .status()
             .expect("failed to exec mknod")
             .success();
-        assert_eq!(true, success, "failed to exec mknod");
+        assert!(success, "failed to exec mknod");
         let meta = char_device_path.metadata().expect("failed to get metas");
 
         let colors = Colors::new(ThemeOption::NoLscolors);
@@ -277,6 +287,44 @@ mod test {
 
         assert_eq!(
             "s".to_string().with(Color::AnsiValue(44)),
+            file_type.render(&colors)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_file_executable() {
+        let tmp_dir = tempdir().expect("failed to create temp dir");
+        for ext in FileType::EXECUTABLE_EXTENSIONS {
+            // Create the file;
+            let file_path = tmp_dir.path().join(format!("file.{ext}"));
+            File::create(&file_path).expect("failed to create file");
+            let meta = file_path.metadata().expect("failed to get metas");
+
+            let colors = Colors::new(ThemeOption::NoLscolors);
+            let file_type = FileType::new(&meta, None, &file_path);
+
+            assert_eq!(
+                ".".to_string().with(Color::AnsiValue(40)),
+                file_type.render(&colors)
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_file_not_executable() {
+        let tmp_dir = tempdir().expect("failed to create temp dir");
+        // Create the file;
+        let file_path = tmp_dir.path().join("file.txt");
+        File::create(&file_path).expect("failed to create file");
+        let meta = file_path.metadata().expect("failed to get metas");
+
+        let colors = Colors::new(ThemeOption::NoLscolors);
+        let file_type = FileType::new(&meta, None, &file_path);
+
+        assert_eq!(
+            ".".to_string().with(Color::AnsiValue(184)),
             file_type.render(&colors)
         );
     }

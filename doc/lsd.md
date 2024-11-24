@@ -38,6 +38,9 @@ lsd is a ls command with a lot of pretty colours and some other stuff to enrich 
 `-X`, `--extensionsort`
 : Sort by file extension
 
+`--git`
+: Display git status. Directory git status is a reduction of included file statuses (recursively).
+
 `--help`
 : Prints help information
 
@@ -90,13 +93,13 @@ lsd is a ls command with a lot of pretty colours and some other stuff to enrich 
 : Natural sort of (version) numbers within text
 
 `--blocks <blocks>...`
-: Specify the blocks that will be displayed and in what order [possible values: permission, user, group, size, date, name, inode]
+: Specify the blocks that will be displayed and in what order [possible values: permission, user, group, size, date, name, inode, git]
 
 `--color <color>...`
 : When to use terminal colours [default: auto]  [possible values: always, auto, never]
 
 `--date <date>...`
-: How to display date [possible values: date, relative, +date-time-format] [default: date]
+: How to display date [possible values: date, locale, relative, +date-time-format] [default: date]
 
 `--depth <num>...`
 : Stop recursing into directories after reaching specified depth
@@ -107,6 +110,9 @@ lsd is a ls command with a lot of pretty colours and some other stuff to enrich 
 `--group-directories-first`
 : Groups the directories at the top before the files. Same as `--group-dirs=first`
 
+`--hyperlink <hyperlink>...`
+: Attach hyperlink to filenames [default: never]  [possible values: always, auto, never]
+
 `--icon <icon>...`
 : When to print the icons [default: auto]  [possible values: always, auto, never]
 
@@ -116,11 +122,32 @@ lsd is a ls command with a lot of pretty colours and some other stuff to enrich 
 `-I, --ignore-glob <pattern>...`
 : Do not display files/directories with names matching the glob pattern(s). More than one can be specified by repeating the argument [default: ]
 
+`--permission <permission>...`
+: How to display permissions [default: rwx for linux, attributes for windows]  [possible values: rwx, octal, attributes, disable]
+
 `--size <size>...`
 : How to display size [default: default]  [possible values: default, short, bytes]
 
 `--sort <WORD>...`
-: Sort by WORD instead of name [possible values: size, time, version, extension]
+: Sort by WORD instead of name [possible values: size, time, version, extension, git]
+
+`-U`, `--no-sort`
+: Do not sort. List entries in directory order
+
+`-Z` `--context`
+: Display SELinux or SMACK security context
+
+`--header`
+: Display block headers
+
+`-N --literal`
+: Print entry names without quoting
+
+`--truncate-owner-after`
+: Truncate the user and group names if they exceed a certain number of characters
+
+`--truncate-owner-marker`
+: Truncation marker appended to a truncated user or group name
 
 # ARGS
 
@@ -146,3 +173,5 @@ lsd is a ls command with a lot of pretty colours and some other stuff to enrich 
 `XDG_CONFIG_HOME`
 : Used to locate optional config file. If `XDG_CONFIG_HOME` is set, use `$XDG_CONFIG_HOME/lsd/config.yaml` else `$HOME/.config/lsd/config.yaml`.
 
+`SHELL_COMPLETIONS_DIR` or `OUT_DIR`
+: Used to specify the directory for generating a shell completions file. If neither are set, no completions file will be generated. The directory will be created if it does not exist.

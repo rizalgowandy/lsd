@@ -6,37 +6,37 @@
 // notice may not be copied, modified, or distributed except
 // according to those terms.
 
-#[macro_use]
-extern crate clap;
-extern crate version_check;
-
-use clap::Shell;
+use clap::CommandFactory;
+use clap_complete::generate_to;
+use clap_complete::shells::*;
 use std::fs;
-use std::io::{self, Write};
 use std::process::exit;
 
 include!("src/app.rs");
 
 fn main() {
-    match version_check::is_min_version("1.43.1") {
-        Some(true) => {}
-        // rustc version too small or can't figure it out
-        _ => {
-            writeln!(&mut io::stderr(), "'lsd' requires rustc >= 1.43.1").unwrap();
-            exit(1);
-        }
-    }
+    let outdir = std::env::var_os("SHELL_COMPLETIONS_DIR")
+        .or_else(|| std::env::var_os("OUT_DIR"))
+        .unwrap_or_else(|| exit(0));
 
-    let var = std::env::var_os("SHELL_COMPLETIONS_DIR").or_else(|| std::env::var_os("OUT_DIR"));
-    let outdir = match var {
-        None => return,
-        Some(outdir) => outdir,
-    };
     fs::create_dir_all(&outdir).unwrap();
 
-    let mut app = build();
-    app.gen_completions("lsd", Shell::Bash, &outdir);
-    app.gen_completions("lsd", Shell::Fish, &outdir);
-    app.gen_completions("lsd", Shell::Zsh, &outdir);
-    app.gen_completions("lsd", Shell::PowerShell, &outdir);
+    let mut app = Cli::command();
+    let bin_name = "lsd";
+    generate_to(Bash, &mut app, bin_name, &outdir).expect("Failed to generate Bash completions");
+    generate_to(Fish, &mut app, bin_name, &outdir).expect("Failed to generate Fish completions");
+    generate_to(Zsh, &mut app, bin_name, &outdir).expect("Failed to generate Zsh completions");
+    generate_to(PowerShell, &mut app, bin_name, &outdir)
+        .expect("Failed to generate PowerShell completions");
+
+    // Disable git feature for these target where git2 is not well supported
+    if !std::env::var("CARGO_FEATURE_GIT2")
+        .map(|flag| flag == "1")
+        .unwrap_or(false)
+        || std::env::var("TARGET")
+            .map(|target| target == "i686-pc-windows-gnu")
+            .unwrap_or(false)
+    {
+        println!(r#"cargo:rustc-cfg=feature="no-git""#);
+    }
 }

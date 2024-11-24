@@ -6,7 +6,7 @@ pub struct INode {
     index: Option<u64>,
 }
 
-impl<'a> From<&'a Metadata> for INode {
+impl From<&Metadata> for INode {
     #[cfg(unix)]
     fn from(meta: &Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
@@ -26,7 +26,7 @@ impl INode {
     pub fn render(&self, colors: &Colors) -> ColoredString {
         match self.index {
             Some(i) => colors.colorize(i.to_string(), &Elem::INode { valid: true }),
-            None => colors.colorize(String::from("-"), &Elem::INode { valid: false }),
+            None => colors.colorize('-', &Elem::INode { valid: false }),
         }
     }
 }
@@ -41,7 +41,7 @@ mod tests {
     use std::process::{Command, ExitStatus};
 
     fn cross_platform_touch(path: &Path) -> io::Result<ExitStatus> {
-        Command::new("touch").arg(&path).status()
+        Command::new("touch").arg(path).status()
     }
 
     #[test]

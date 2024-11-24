@@ -1,11 +1,13 @@
+//! This module provides methods to handle the program's config files and
+//! operations related to this.
 use crate::flags::display::Display;
 use crate::flags::icons::{IconOption, IconTheme};
 use crate::flags::layout::Layout;
+use crate::flags::permission::PermissionFlag;
 use crate::flags::size::SizeFlag;
 use crate::flags::sorting::{DirGrouping, SortColumn};
+use crate::flags::HyperlinkOption;
 use crate::flags::{ColorOption, ThemeOption};
-///! This module provides methods to handle the program's config files and operations related to
-///! this.
 use crate::print_error;
 
 use std::path::{Path, PathBuf};
@@ -13,10 +15,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use std::fs;
-
-const CONF_DIR: &str = "lsd";
-const CONF_FILE_NAME: &str = "config";
-const YAML_LONG_EXT: &str = "yaml";
+use std::io;
 
 /// A struct to hold an optional configuration items, and provides methods
 /// around error handling in a config file.
@@ -36,10 +35,15 @@ pub struct Config {
     pub layout: Option<Layout>,
     pub recursion: Option<Recursion>,
     pub size: Option<SizeFlag>,
+    pub permission: Option<PermissionFlag>,
     pub sorting: Option<Sorting>,
     pub no_symlink: Option<bool>,
     pub total_size: Option<bool>,
     pub symlink_arrow: Option<String>,
+    pub hyperlink: Option<HyperlinkOption>,
+    pub header: Option<bool>,
+    pub literal: Option<bool>,
+    pub truncate_owner: Option<TruncateOwner>,
 }
 
 #[derive(Eq, PartialEq, Debug, Deserialize)]
@@ -69,6 +73,37 @@ pub struct Sorting {
     pub dir_grouping: Option<DirGrouping>,
 }
 
+#[derive(Eq, PartialEq, Debug, Deserialize)]
+pub struct TruncateOwner {
+    pub after: Option<usize>,
+    pub marker: Option<String>,
+}
+
+/// This expand the `~` in path to HOME dir
+/// returns the origin one if no `~` found;
+/// returns None if error happened when getting home dir
+///
+/// Implementing this to reuse the `dirs` dependency, avoid adding new one
+pub fn expand_home<P: AsRef<Path>>(path: P) -> Option<PathBuf> {
+    let p = path.as_ref();
+    if !p.starts_with("~") {
+        return Some(p.to_path_buf());
+    }
+    if p == Path::new("~") {
+        return dirs::home_dir();
+    }
+    dirs::home_dir().map(|mut h| {
+        if h == Path::new("/") {
+            // Corner case: `h` root directory;
+            // don't prepend extra `/`, just drop the tilde.
+            p.strip_prefix("~").unwrap().to_path_buf()
+        } else {
+            h.push(p.strip_prefix("~/").unwrap());
+            h
+        }
+    })
+}
+
 impl Config {
     /// This constructs a Config struct with all None
     pub fn with_none() -> Self {
@@ -85,28 +120,41 @@ impl Config {
             layout: None,
             recursion: None,
             size: None,
+            permission: None,
             sorting: None,
             no_symlink: None,
             total_size: None,
             symlink_arrow: None,
+            hyperlink: None,
+            header: None,
+            literal: None,
+            truncate_owner: None,
         }
     }
 
-    /// This constructs a Config struct with a passed file path [String].
-    pub fn from_file(file: String) -> Option<Self> {
-        match fs::read(&file) {
+    /// This constructs a Config struct with a passed file path.
+    pub fn from_file<P: AsRef<Path>>(file: P) -> Option<Self> {
+        let file = file.as_ref();
+        match fs::read(file) {
             Ok(f) => match Self::from_yaml(&String::from_utf8_lossy(&f)) {
                 Ok(c) => Some(c),
                 Err(e) => {
-                    print_error!("Configuration file {} format error, {}.", &file, e);
+                    print_error!(
+                        "Configuration file {} format error, {}.",
+                        file.to_string_lossy(),
+                        e
+                    );
                     None
                 }
             },
             Err(e) => {
-                match e.kind() {
-                    std::io::ErrorKind::NotFound => {}
-                    _ => print_error!("Can not open config file {}: {}.", &file, e),
-                };
+                if e.kind() != io::ErrorKind::NotFound {
+                    print_error!(
+                        "Can not open config file {}: {}.",
+                        file.to_string_lossy(),
+                        e
+                    );
+                }
                 None
             }
         }
@@ -118,68 +166,50 @@ impl Config {
         serde_yaml::from_str::<Self>(yaml)
     }
 
-    /// This provides the path for a configuration file, according to the XDG_BASE_DIRS specification.
-    /// return None if error like PermissionDenied
-    #[cfg(not(windows))]
-    pub fn config_file_path() -> Option<PathBuf> {
+    /// Config paths for non-Windows platforms will be read from
+    /// `$XDG_CONFIG_HOME/lsd` or `$HOME/.config/lsd`
+    /// (usually, those are the same) in that order.
+    /// The default paths for Windows will be read from
+    /// `%APPDATA%\lsd` or `%USERPROFILE%\.config\lsd` in that order.
+    /// This will apply both to the config file and the theme file.
+    pub fn config_paths() -> impl Iterator<Item = PathBuf> {
+        #[cfg(not(windows))]
         use xdg::BaseDirectories;
-        match BaseDirectories::with_prefix(CONF_DIR) {
-            Ok(p) => {
-                return Some(p.get_config_home());
-            }
-            Err(e) => print_error!("Can not open config file: {}.", e),
-        }
-        None
-    }
 
-    /// This provides the path for a configuration file, inside the %APPDATA% directory.
-    /// return None if error like PermissionDenied
-    #[cfg(windows)]
-    pub fn config_file_path() -> Option<PathBuf> {
-        if let Some(p) = dirs::config_dir() {
-            return Some(p.join(CONF_DIR));
-        }
-        None
-    }
-
-    /// This expand the `~` in path to HOME dir
-    /// returns the origin one if no `~` found;
-    /// returns None if error happened when getting home dir
-    ///
-    /// Implementing this to reuse the `dirs` dependency, avoid adding new one
-    pub fn expand_home<P: AsRef<Path>>(path: P) -> Option<PathBuf> {
-        let p = path.as_ref();
-        if !p.starts_with("~") {
-            return Some(p.to_path_buf());
-        }
-        if p == Path::new("~") {
-            return dirs::home_dir();
-        }
-        dirs::home_dir().map(|mut h| {
-            if h == Path::new("/") {
-                // Corner case: `h` root directory;
-                // don't prepend extra `/`, just drop the tilde.
-                p.strip_prefix("~").unwrap().to_path_buf()
-            } else {
-                h.push(p.strip_prefix("~/").unwrap());
-                h
-            }
-        })
+        [
+            dirs::home_dir().map(|h| h.join(".config")),
+            dirs::config_dir(),
+            #[cfg(not(windows))]
+            BaseDirectories::with_prefix("")
+                .ok()
+                .map(|p| p.get_config_home()),
+        ]
+        .iter()
+        .filter_map(|p| p.as_ref().map(|p| p.join("lsd")))
+        .collect::<Vec<_>>()
+        .into_iter()
     }
 }
 
 impl Default for Config {
+    /// Try to find either config.yaml or config.yml in the config directories
+    /// and use the first one that is found. If none are found, or the parsing fails,
+    /// use the default from DEFAULT_CONFIG.
     fn default() -> Self {
-        if let Some(p) = Self::config_file_path() {
-            if let Some(c) = Self::from_file(
-                p.join([CONF_FILE_NAME, YAML_LONG_EXT].join("."))
-                    .to_string_lossy()
-                    .to_string(),
-            ) {
-                return c;
-            }
-        }
-        Self::from_yaml(DEFAULT_CONFIG).unwrap()
+        Config::config_paths()
+            .find_map(|p| {
+                let yaml = p.join("config.yaml");
+                let yml = p.join("config.yml");
+                if yaml.is_file() {
+                    Config::from_file(yaml)
+                } else if yml.is_file() {
+                    Config::from_file(yml)
+                } else {
+                    None
+                }
+            })
+            .or(Self::from_yaml(DEFAULT_CONFIG).ok())
+            .expect("Failed to read both config file and default config")
     }
 }
 
@@ -194,7 +224,7 @@ classic: false
 # == Blocks ==
 # This specifies the columns and their order when using the long and the tree
 # layout.
-# Possible values: permission, user, group, size, size_value, date, name, inode
+# Possible values: permission, user, group, context, size, date, name, inode, git
 blocks:
   - permission
   - user
@@ -222,7 +252,7 @@ color:
 # This specifies the date format for the date column. The freeform format
 # accepts an strftime like string.
 # When "classic" is set, this is set to "date".
-# Possible values: date, relative, +<date_format>
+# Possible values: date, locale, relative, +<date_format>
 # date: date
 
 # == Dereference ==
@@ -278,6 +308,11 @@ recursion:
 # Possible values: default, short, bytes
 size: default
 
+# == Permission ==
+# Specify the format of the permission column.
+# Possible value: rwx, octal, attributes, disable
+# permission: rwx
+
 # == Sorting ==
 sorting:
   # Specify what to sort by.
@@ -301,9 +336,28 @@ no-symlink: false
 # Possible values: false, true
 total-size: false
 
+# == Hyperlink ==
+# Whether to display the total size of directories.
+# Possible values: always, auto, never
+hyperlink: never
+
 # == Symlink arrow ==
 # Specifies how the symlink arrow display, chars in both ascii and utf8
 symlink-arrow: ⇒
+
+# == Literal ==
+# Whether to print entry names without quoting
+# Possible values: false, true
+literal: false
+
+# == Truncate owner ==
+# How to truncate the username and group name for the file if they exceed a
+# certain number of characters.
+truncate-owner:
+  # Number of characters to keep. By default, no truncation is done (empty value).
+  after:
+  # String to be appended to a name if truncated.
+  marker: ""
 "#;
 
 #[cfg(test)]
@@ -322,6 +376,7 @@ mod tests {
     use crate::flags::layout::Layout;
     use crate::flags::size::SizeFlag;
     use crate::flags::sorting::{DirGrouping, SortColumn};
+    use crate::flags::HyperlinkOption;
 
     #[test]
     fn test_read_default() {
@@ -329,17 +384,14 @@ mod tests {
         assert_eq!(
             Config {
                 classic: Some(false),
-                blocks: Some(
-                    vec![
-                        "permission".into(),
-                        "user".into(),
-                        "group".into(),
-                        "size".into(),
-                        "date".into(),
-                        "name".into(),
-                    ]
-                    .into()
-                ),
+                blocks: Some(vec![
+                    "permission".into(),
+                    "user".into(),
+                    "group".into(),
+                    "size".into(),
+                    "date".into(),
+                    "name".into(),
+                ]),
                 color: Some(config_file::Color {
                     when: Some(ColorOption::Auto),
                     theme: Some(ThemeOption::Default)
@@ -360,6 +412,7 @@ mod tests {
                     depth: None,
                 }),
                 size: Some(SizeFlag::Default),
+                permission: None,
                 sorting: Some(config_file::Sorting {
                     column: Some(SortColumn::Name),
                     reverse: Some(false),
@@ -368,6 +421,13 @@ mod tests {
                 no_symlink: Some(false),
                 total_size: Some(false),
                 symlink_arrow: Some("⇒".into()),
+                hyperlink: Some(HyperlinkOption::Never),
+                header: None,
+                literal: Some(false),
+                truncate_owner: Some(config_file::TruncateOwner {
+                    after: None,
+                    marker: Some("".to_string()),
+                }),
             },
             c
         );
@@ -387,7 +447,7 @@ mod tests {
 
     #[test]
     fn test_read_config_file_not_found() {
-        let c = Config::from_file("not-existed".to_string());
+        let c = Config::from_file("not-existed");
         assert!(c.is_none())
     }
 

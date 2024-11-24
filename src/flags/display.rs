@@ -1,36 +1,45 @@
-//! This module defines the [Display] flag. To set it up from [ArgMatches], a [Config] and its
+//! This module defines the [Display] flag. To set it up from [Cli], a [Config] and its
 //! [Default] value, use its [configure_from](Configurable::configure_from) method.
 
 use super::Configurable;
 
+use crate::app::Cli;
 use crate::config_file::Config;
 
-use clap::ArgMatches;
 use serde::Deserialize;
 
 /// The flag showing which file system nodes to display.
-#[derive(Clone, Debug, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Display {
+    /// windows only, used to show files with system protected flag
+    SystemProtected,
     All,
     AlmostAll,
     DirectoryOnly,
+    #[default]
     VisibleOnly,
 }
 
 impl Configurable<Self> for Display {
-    /// Get a potential `Display` variant from [ArgMatches].
+    /// Get a potential `Display` variant from [Cli].
     ///
     /// If any of the "all", "almost-all" or "directory-only" arguments is passed, this returns the
     /// corresponding `Display` variant in a [Some]. If neither of them is passed, this returns
     /// [None].
-    fn from_arg_matches(matches: &ArgMatches) -> Option<Self> {
-        if matches.is_present("directory-only") {
+    fn from_cli(cli: &Cli) -> Option<Self> {
+        if cli.directory_only {
             Some(Self::DirectoryOnly)
-        } else if matches.is_present("almost-all") {
+        } else if cli.almost_all {
             Some(Self::AlmostAll)
-        } else if matches.is_present("all") {
+        } else if cli.all {
             Some(Self::All)
+        } else if cli.system_protected {
+            #[cfg(windows)]
+            return Some(Self::SystemProtected);
+
+            #[cfg(not(windows))]
+            return Some(Self::All);
         } else {
             None
         }
@@ -47,53 +56,53 @@ impl Configurable<Self> for Display {
     }
 }
 
-/// The default value for `Display` is [Display::VisibleOnly].
-impl Default for Display {
-    fn default() -> Self {
-        Display::VisibleOnly
-    }
-}
-
 #[cfg(test)]
 mod test {
+    use clap::Parser;
+
     use super::Display;
 
-    use crate::app;
+    use crate::app::Cli;
     use crate::config_file::Config;
     use crate::flags::Configurable;
 
     #[test]
-    fn test_from_arg_matches_none() {
-        let argv = vec!["lsd"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(None, Display::from_arg_matches(&matches));
+    fn test_from_cli_none() {
+        let argv = ["lsd"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(None, Display::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_all() {
-        let argv = vec!["lsd", "--all"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(Some(Display::All), Display::from_arg_matches(&matches));
+    fn test_from_cli_system_protected() {
+        let argv = ["lsd", "--system-protected"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        #[cfg(windows)]
+        assert_eq!(Some(Display::SystemProtected), Display::from_cli(&cli));
+
+        #[cfg(not(windows))]
+        assert_eq!(Some(Display::All), Display::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_almost_all() {
-        let argv = vec!["lsd", "--almost-all"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(
-            Some(Display::AlmostAll),
-            Display::from_arg_matches(&matches)
-        );
+    fn test_from_cli_all() {
+        let argv = ["lsd", "--all"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Display::All), Display::from_cli(&cli));
     }
 
     #[test]
-    fn test_from_arg_matches_directory_only() {
-        let argv = vec!["lsd", "--directory-only"];
-        let matches = app::build().get_matches_from_safe(argv).unwrap();
-        assert_eq!(
-            Some(Display::DirectoryOnly),
-            Display::from_arg_matches(&matches)
-        );
+    fn test_from_cli_almost_all() {
+        let argv = ["lsd", "--almost-all"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Display::AlmostAll), Display::from_cli(&cli));
+    }
+
+    #[test]
+    fn test_from_cli_directory_only() {
+        let argv = ["lsd", "--directory-only"];
+        let cli = Cli::try_parse_from(argv).unwrap();
+        assert_eq!(Some(Display::DirectoryOnly), Display::from_cli(&cli));
     }
 
     #[test]
